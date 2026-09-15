@@ -6,10 +6,11 @@ export async function checkA2AExecutionApproval(
   confirmTool?: (toolName: string, input: Record<string, unknown>, diff?: any[]) => Promise<any>
 ): Promise<boolean> {
   const key = agent.alias || agent.manifest.name;
+  const startCommand = agent.manifest["start-command"] || "unknown command";
 
   const registry = await loadRegistry();
   const entry = registry.agents[key];
-  if (entry?.approvedExecution) {
+  if (entry?.approvedExecution && entry.approvedStartCommand === startCommand) {
     return true;
   }
 
@@ -18,11 +19,15 @@ export async function checkA2AExecutionApproval(
     return false;
   }
 
-  const startCommand = agent.manifest["start-command"] || "unknown command";
-  const choice = await confirmTool(
-    `A2A Process Execution: ${key}`,
-    { "start-command": startCommand }
-  );
+  let promptTitle = `A2A Process Execution: ${key}`;
+  const promptInput: Record<string, unknown> = { "start-command": startCommand };
+
+  if (entry?.approvedExecution && entry.approvedStartCommand && entry.approvedStartCommand !== startCommand) {
+    promptTitle = `🚨 SECURITY WARNING: ${key}`;
+    promptInput["WARNING"] = `The start command was changed from what you previously approved ("${entry.approvedStartCommand}").`;
+  }
+
+  const choice = await confirmTool(promptTitle, promptInput);
 
   if (choice === "yes" || choice === "always") {
     if (choice === "always") {
@@ -31,6 +36,7 @@ export async function checkA2AExecutionApproval(
         const reg = await loadRegistry();
         if (reg.agents[key]) {
           reg.agents[key].approvedExecution = true;
+          reg.agents[key].approvedStartCommand = startCommand;
           await saveRegistry(reg);
         }
       } finally {
