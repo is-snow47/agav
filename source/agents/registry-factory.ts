@@ -81,6 +81,10 @@ export function agentToTool(
         if (agentType === "native") {
           output = await executeNativeAgent(agent, task, deps);
         } else if (agentType === "a2a") {
+          const { checkA2AExecutionApproval } = await import("./a2a-approval.js");
+          if (!await checkA2AExecutionApproval(agent, deps.confirmTool)) {
+            return { output: "User denied execution of A2A agent process.", isError: true };
+          }
           output = await executeA2AAgent(agent, task);
         } else {
           throw new Error(`Unknown agent type: ${agentType}`);

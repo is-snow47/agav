@@ -85,6 +85,7 @@ export interface AgentRegistryEntry {
   sourceUrl?: string; // git URL if installed from marketplace
   installedAt: string; // ISO timestamp
   version: string;
+  approvedExecution?: boolean; // True if the user selected [A]lways for execution
 }
 
 /**
