@@ -19,7 +19,7 @@ function canExec(cmd: string): boolean {
 }
 
 export function detectSandboxBackend(): SandboxBackend {
-  // Always respect the env var ?" check every call, not just first
+  // Always respect the env var — check every call, not just first
   if (process.env["AGAV_NO_SANDBOX"] === "1") {
     return "none";
   }
@@ -61,7 +61,7 @@ function filterEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, val] of Object.entries(process.env)) {
     if (val === undefined) continue;
-    if (/KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH|PAT|URL|NODE_OPTIONS|LD_PRELOAD|BASH_ENV|ENV|PROMPT_COMMAND/i.test(key)) continue;
+    if (/KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH|(?:^|_)PAT(?:$|_)|NODE_OPTIONS|LD_PRELOAD|BASH_ENV|PROMPT_COMMAND/i.test(key)) continue;
     if (typeof val === "string" && val.match(/:\/\/[^:]+:[^@]+@/)) continue;
     env[key] = val;
   }

@@ -231,4 +231,53 @@ describe("utils/sandbox", () => {
     expect(runCall![1]).toContain("-u");
     expect(runCall![1]).toContain("501:20");
   });
+
+  it("preserves operational environment variables while filtering credentials", async () => {
+    vi.resetModules();
+    const cp = await import("node:child_process");
+    const sandbox = await import("../utils/sandbox.js");
+    const keys = ["PATH", "NODE_ENV", "VIRTUAL_ENV", "BASE_URL", "GITHUB_TOKEN", "GITHUB_PAT", "DATABASE_URL"];
+    const previous = new Map(keys.map((key) => [key, process.env[key]]));
+
+    try {
+      process.env.PATH = "/usr/local/bin:/usr/bin";
+      process.env.NODE_ENV = "production";
+      process.env.VIRTUAL_ENV = "/tmp/venv";
+      process.env.BASE_URL = "https://example.test";
+      process.env.GITHUB_TOKEN = "secret-token";
+      process.env.GITHUB_PAT = "secret-pat";
+      process.env.DATABASE_URL = "postgres://user:password@example.test/app";
+      vi.mocked(cp.execFile).mockImplementation((...args: any[]) => {
+        const callback = args[args.length - 1];
+        callback(null, "success", "");
+        return {} as any;
+      });
+
+      await sandbox.runInSandbox({
+        command: "echo test",
+        cwd: "/test/dir",
+        timeout: 1000,
+        maxBuffer: 1024,
+        forceBackend: "none",
+      });
+
+      const call = vi.mocked(cp.execFile).mock.calls.find((args) => args[0] === "/bin/sh");
+      const env = call?.[2]?.env as Record<string, string>;
+      expect(env).toMatchObject({
+        PATH: "/usr/local/bin:/usr/bin",
+        NODE_ENV: "production",
+        VIRTUAL_ENV: "/tmp/venv",
+        BASE_URL: "https://example.test",
+      });
+      expect(env).not.toHaveProperty("GITHUB_TOKEN");
+      expect(env).not.toHaveProperty("GITHUB_PAT");
+      expect(env).not.toHaveProperty("DATABASE_URL");
+    } finally {
+      for (const key of keys) {
+        const value = previous.get(key);
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
 });
