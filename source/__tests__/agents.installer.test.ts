@@ -26,76 +26,14 @@ vi.mock("../agents/agent-registry.js", () => ({
 }));
 
 import { execFile } from "node:child_process";
-import { stat, readFile, cp, mkdir } from "node:fs/promises";
+import { stat, readFile, cp, mkdir, readdir } from "node:fs/promises";
 import { registerAgent } from "../agents/agent-registry.js";
 import { loadAgent } from "../agents/loader.js";
-import { installAgent, uninstallAgent, parseGitAgentUrl } from "../agents/installer.js";
+import { installAgent, uninstallAgent } from "../agents/installer.js";
 
 describe("agents/installer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  describe("parseGitAgentUrl", () => {
-    it("parses single-segment branch with agents subdirectory", () => {
-      const parsed = parseGitAgentUrl("https://github.com/owner/repo/tree/main/agents/my-agent");
-      expect(parsed).toEqual({
-        repoUrl: "https://github.com/owner/repo",
-        branch: "main",
-        subPath: "/agents/my-agent",
-      });
-    });
-
-    it("parses slashed branch with agents subdirectory", () => {
-      const parsed = parseGitAgentUrl("https://github.com/owner/repo/tree/feature/cool-agent/agents/my-agent");
-      expect(parsed).toEqual({
-        repoUrl: "https://github.com/owner/repo",
-        branch: "feature/cool-agent",
-        subPath: "/agents/my-agent",
-      });
-    });
-
-    it("parses slashed branch ending in AGENT.md", () => {
-      const parsed = parseGitAgentUrl("https://github.com/owner/repo/tree/feature/cool-agent/AGENT.md");
-      expect(parsed).toEqual({
-        repoUrl: "https://github.com/owner/repo",
-        branch: "feature/cool-agent",
-        subPath: "/AGENT.md",
-      });
-    });
-
-    it("parses single-segment branch with custom (non-agents) subdirectory", () => {
-      const parsed = parseGitAgentUrl("https://github.com/owner/repo/tree/main/tools/foo");
-      expect(parsed).toEqual({
-        repoUrl: "https://github.com/owner/repo",
-        branch: "main",
-        subPath: "/tools/foo",
-      });
-    });
-
-    it("parses bare /agents/ URL without /tree/", () => {
-      const parsed = parseGitAgentUrl("https://github.com/owner/repo/agents/my-agent");
-      expect(parsed).toEqual({
-        repoUrl: "https://github.com/owner/repo",
-        branch: undefined,
-        subPath: "/agents/my-agent",
-      });
-    });
-
-    it("parses bare repo URL", () => {
-      const parsed = parseGitAgentUrl("https://github.com/owner/repo");
-      expect(parsed).toEqual({
-        repoUrl: "https://github.com/owner/repo",
-      });
-    });
-
-    it("parses repo URL with only branch in /tree/", () => {
-      const parsed = parseGitAgentUrl("https://github.com/owner/repo/tree/main");
-      expect(parsed).toEqual({
-        repoUrl: "https://github.com/owner/repo",
-        branch: "main",
-      });
-    });
   });
 
   describe("subPath traversal in sparse-checkout URLs", () => {
@@ -219,5 +157,60 @@ describe("agents/installer", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("Invalid agent name");
     });
+  describe("GitHub tree URL branch parsing", () => {
+    it("resolves branch names with slashes using ls-remote", async () => {
+      vi.mocked(execFile).mockImplementation((...args: any[]) => {
+        const gitArgs = args[1];
+        const cb = args[args.length - 1];
+        if (gitArgs && gitArgs[0] === "ls-remote") {
+          cb(null, "hash123\trefs/heads/feature/new-agent\nhash456\trefs/heads/main\n", "");
+        } else {
+          cb(null, "", "");
+        }
+        return undefined as any;
+      });
+
+      // We just want to check the git clone calls, so mock the extraction parts
+      vi.mocked(readdir).mockResolvedValue(["AGENT.md"] as any);
+      vi.mocked(stat).mockResolvedValue({ isDirectory: () => true } as any);
+      // To prevent cleanup failure from failing the test
+      vi.mocked(loadAgent).mockResolvedValue({ manifest: { name: "test", version: "1" }, tools: [] } as any);
+
+      await installAgent("https://github.com/owner/repo/tree/feature/new-agent/custom/dir");
+
+      // Verify git clone was called with correct branch
+      expect(vi.mocked(execFile)).toHaveBeenCalledWith(
+        "git",
+        expect.arrayContaining(["clone", "--branch", "feature/new-agent", "https://github.com/owner/repo"]),
+        expect.anything(),
+        expect.anything()
+      );
+
+      // Verify sparse-checkout was called with correct path
+      expect(vi.mocked(execFile)).toHaveBeenCalledWith(
+        "git",
+        expect.arrayContaining(["sparse-checkout", "set", "custom/dir"]),
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
+    it("rejects ambiguous URLs if branch cannot be resolved from remote refs", async () => {
+      vi.mocked(execFile).mockImplementation((...args: any[]) => {
+        const gitArgs = args[1];
+        const cb = args[args.length - 1];
+        if (gitArgs && gitArgs[0] === "ls-remote") {
+          cb(null, "hash123\trefs/heads/main\n", ""); // remote only has 'main'
+        } else {
+          cb(null, "", "");
+        }
+        return undefined as any;
+      });
+
+      const result = await installAgent("https://github.com/owner/repo/tree/feature/new-agent/custom/dir");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Ambiguous or invalid URL: could not resolve branch/tag");
+    });
+  });
   });
 });
